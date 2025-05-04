@@ -5,11 +5,12 @@ from typing import Union
 import numpy as np
 
 class ResNet50Extractor:
-    IMAGENET_MEAN = models.ResNet50_Weights.DEFAULT.transforms().mean 
-    IMAGENET_STD = models.ResNet50_Weights.DEFAULT.transforms().std
+    WEIGHTS = models.ResNet50_Weights.DEFAULT
+    IMAGENET_MEAN = WEIGHTS.transforms().mean 
+    IMAGENET_STD = WEIGHTS.transforms().std 
 
     def __init__(self):
-        model = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
+        model = models.resnet50(weights=ResNet50Extractor.WEIGHTS)
         
         # Remove classifier:
         self.feature_extractor = torch.nn.Sequential(*list(model.children())[:-1]) # Exclude fc
@@ -57,14 +58,3 @@ class ResNet50Extractor:
                                  std=ResNet50Extractor.IMAGENET_STD)
         ])
         return transform(img).unsqueeze(0)
-
-if __name__ == '__main__':
-    image_paths = ['imgs/cat.jpg', 'imgs/breast.jpg', 'imgs/black.jpg']
-    extractor = ResNet50Extractor()
-
-    for img_path in image_paths:
-        img = ResNet50Extractor.create_image_tensor(img_path)
-        features = extractor.extract(img)
-        print(len(features))
-        print(features)
-        print()
