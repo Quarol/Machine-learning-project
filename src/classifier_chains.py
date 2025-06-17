@@ -9,15 +9,20 @@ class ClassifierChainsWrapper(MultiLabelWrapper):
         self.base_classifier = base_classifier
         self.n_chains = n_chains
         self.random_state = random_state
-        self.chains = [
-            ClassifierChain(clone(base_classifier), order='random', random_state=self.random_state + i)
-            for i in range(n_chains)
-        ]
 
-    def fit(self, X, Y):
-        for chain in self.chains:
-            chain.fit(X, Y)
+    def fit(self, X, y):
+        self.chains_ = [
+            ClassifierChain(
+                clone(self.base_classifier),
+                order='random',
+                random_state=self.random_state + i
+            )
+            for i in range(self.n_chains)
+        ]
+        for chain in self.chains_:
+            chain.fit(X, y)
+        return self
 
     def predict(self, X):
-        Y_pred_agg = sum(chain.predict(X) for chain in self.chains)
-        return (Y_pred_agg / self.n_chains >= 0.5).astype(int)
+        y_pred_agg = sum(chain.predict(X) for chain in self.chains_)
+        return (y_pred_agg / self.n_chains >= 0.5).astype(int)

@@ -7,10 +7,11 @@ from src.wrapper import MultiLabelWrapper
 class BinaryRelevanceWrapper(MultiLabelWrapper):
     def __init__(self, base_classifier):
         self.base_classifier = base_classifier
-        self.classifier = MultiOutputClassifier(clone(base_classifier))
 
-    def fit(self, X, Y):
-        self.classifier.fit(X, Y)
+    def fit(self, X, y):
+        self.classifier_ = MultiOutputClassifier(clone(self.base_classifier))
+        self.classifier_.fit(X, y)
+        return self
 
     def predict(self, X):
-        return self.classifier.predict(X)
+        return self.classifier_.predict(X)

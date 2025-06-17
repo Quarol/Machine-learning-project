@@ -9,12 +9,16 @@ class ResNet50Extractor:
     IMAGENET_MEAN = WEIGHTS.transforms().mean 
     IMAGENET_STD = WEIGHTS.transforms().std 
 
-    def __init__(self):
+    def __init__(self, exclude_avgpool: bool = False):
         model = models.resnet50(weights=ResNet50Extractor.WEIGHTS)
         
         # Remove classifier:
-        self.feature_extractor = torch.nn.Sequential(*list(model.children())[:-1]) # Exclude fc
-        #self.feature_extractor = torch.nn.Sequential(*list(model.children())[:-1]) # Exclude avgpool and fc 
+        if exclude_avgpool:
+            # Exclude avgpool and fc 
+            self.feature_extractor = torch.nn.Sequential(*list(model.children())[:-1]) 
+        else:
+            # Exclude fc
+            self.feature_extractor = torch.nn.Sequential(*list(model.children())[:-1]) 
 
         self.feature_extractor.eval()
 
@@ -59,13 +63,16 @@ class ResNet50Extractor:
         ])
         return transform(img).unsqueeze(0)
 
-if __name__ == '__main__':
-    image_paths = ['imgs/cat.jpg', 'imgs/breast.jpg', 'imgs/black.jpg']
+def get_resnet50_features(input_images: list[Union[str, Image.Image, np.ndarray]]) -> list[list[float]]:
     extractor = ResNet50Extractor()
+    features_lists = []
 
-    for img_path in image_paths:
-        img = ResNet50Extractor.create_image_tensor(img_path)
-        features = extractor.extract(img)
-        print(f'{len(features)}\n{features}\n\n', end='')
+    for img in input_images:
+        img_tensor = ResNet50Extractor.create_image_tensor(img)
+        features_tensor = extractor.extract(img_tensor)
+        features = features_tensor[0].tolist()
+        features_lists.append(features)
+    
+    return features_lists
 
 

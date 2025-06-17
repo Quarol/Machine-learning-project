@@ -1,8 +1,11 @@
 from abc import ABC, abstractmethod
+from sklearn.base import BaseEstimator, ClassifierMixin
 
-class MultiLabelWrapper(ABC):
+class MultiLabelWrapper(BaseEstimator, ClassifierMixin, ABC):
     @abstractmethod
-    def fit(self, X, Y): pass
-    
+    def fit(self, X, y):
+        pass
+
     @abstractmethod
-    def predict(self, X): pass
+    def predict(self, X):
+        pass
