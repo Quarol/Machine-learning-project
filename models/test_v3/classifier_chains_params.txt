@@ -1,0 +1,8 @@
+penalty: l2
+solver: liblinear
+max_iter: 100
+C: 0.1
+l1_ratio: None
+order: random
+random_state: 123
+CV Macro F1: 0.1743

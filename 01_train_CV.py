@@ -30,36 +30,43 @@ def add_random_state_to_param_grid(param_grid, random_state):
         param_dict['random_state'] = random_state
     return param_grid
 
-
-def br_and_lp_param_combinations(penalties: list[str], solvers: list[str], max_iters: list[int], Cs: list[float], l1_ratios: list[float]) -> list[dict]:
+def br_and_lp_param_combinations(
+    penalties: list[str],
+    solvers: list[str],
+    max_iters: list[int],
+    Cs: list[float],
+    l1_ratios: list[float]
+) -> list[dict]:
     combinations = []
+    
     for penalty, solver, max_iter, C in itertools.product(penalties, solvers, max_iters, Cs):
         # Filter out incompatible combinations
         if penalty == 'none' and solver not in ['lbfgs', 'newton-cg', 'saga']:
             continue
         if penalty == 'l1' and solver not in ['liblinear', 'saga']:
             continue
-        if penalty == 'elasticnet' and solver != 'saga':
-            continue
+        if penalty == 'elasticnet':
+            if solver != 'saga' or not l1_ratios:
+                continue
         if penalty == 'l2' and solver not in ['newton-cg', 'lbfgs', 'liblinear', 'saga']:
             continue
-        
-        param_dict = {
+
+        base_params = {
             'penalty': penalty,
             'solver': solver,
             'max_iter': max_iter,
             'C': C,
         }
-        # Only add l1_ratio if elasticnet
+
+        # Expand l1_ratio only for elasticnet
         if penalty == 'elasticnet':
             for l1_ratio in l1_ratios:
-                param_dict_with_l1 = param_dict.copy()
-                param_dict_with_l1['l1_ratio'] = l1_ratio
-                combinations.append(param_dict_with_l1)
+                combo = base_params.copy()
+                combo['l1_ratio'] = l1_ratio
+                combinations.append(combo)
         else:
-            # No l1_ratio needed
-            param_dict['l1_ratio'] = None
-            combinations.append(param_dict)
+            base_params['l1_ratio'] = None
+            combinations.append(base_params)
 
     return combinations
 
@@ -199,11 +206,11 @@ if __name__ == "__main__":
 
     CV_SPLITS = 5
 
-    penalties = ['l1', 'l2', 'elasticnet']
-    solvers = ['liblinear', 'saga'] 
+    penalties = ['l1', 'l2']
+    solvers = ['liblinear']
     max_iters = [100, 250, 500]
     Cs = [0.1, 1.0, 10]
-    ratios = [0.1, 0.5, 0.9]
+    ratios = []
     orders = ['random']
 
     random_state = 123
@@ -224,7 +231,7 @@ if __name__ == "__main__":
 
 
     grid_search_and_save(BinaryRelevanceWrapper, X_full, y_full, scaler, CV_SPLITS, br_param_grid, folder, "binary_relevance")
-    #grid_search_and_save(LabelPowersetWrapper, X_full, y_full, scaler, CV_SPLITS, lp_param_grid, folder, "label_powerset")
-    #grid_search_and_save(ClassifierChainsWrapper, X_full, y_full, scaler, CV_SPLITS, cc_param_grid, folder, "classifier_chains")
+    grid_search_and_save(LabelPowersetWrapper, X_full, y_full, scaler, CV_SPLITS, lp_param_grid, folder, "label_powerset")
+    grid_search_and_save(ClassifierChainsWrapper, X_full, y_full, scaler, CV_SPLITS, cc_param_grid, folder, "classifier_chains")
 
     print("Grid search complete. Best models saved.")
