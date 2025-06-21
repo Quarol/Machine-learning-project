@@ -1,0 +1,2 @@
+Max Iterations: 250
+CV Macro F1: 0.1282

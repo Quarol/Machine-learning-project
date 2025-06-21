@@ -1,10 +1,11 @@
-torch==2.7.0
-torchvision==0.22.0
-pillow==11.2.1
-numpy==2.2.5
-scipy==1.15.3
-scikit-learn
 scikit-multilearn
+numpy
+scipy
+torch
+torchvision
+pillow
+statsmodels
+scikit-learn
 pandas
 matplotlib
 seaborn
