@@ -3,7 +3,6 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import f1_score, hamming_loss, accuracy_score, jaccard_score
-#from skmultilearn.model_selection import IterativeStratification
 import joblib
 import os
 import itertools
@@ -30,17 +29,10 @@ def add_random_state_to_param_grid(param_grid, random_state):
         param_dict['random_state'] = random_state
     return param_grid
 
-def br_and_lp_param_combinations(
-    penalties: list[str],
-    solvers: list[str],
-    max_iters: list[int],
-    Cs: list[float],
-    l1_ratios: list[float]
-) -> list[dict]:
+def br_and_lp_param_combinations(penalties, solvers, max_iters, Cs, l1_ratios):
     combinations = []
     
     for penalty, solver, max_iter, C in itertools.product(penalties, solvers, max_iters, Cs):
-        # Filter out incompatible combinations
         if penalty == 'none' and solver not in ['lbfgs', 'newton-cg', 'saga']:
             continue
         if penalty == 'l1' and solver not in ['liblinear', 'saga']:
@@ -58,7 +50,6 @@ def br_and_lp_param_combinations(
             'C': C,
         }
 
-        # Expand l1_ratio only for elasticnet
         if penalty == 'elasticnet':
             for l1_ratio in l1_ratios:
                 combo = base_params.copy()
@@ -71,7 +62,7 @@ def br_and_lp_param_combinations(
     return combinations
 
 
-def cc_param_combinations(penalties: list[str], solvers: list[str], max_iters: list[int], Cs: list[float], l1_ratios: list[float], orders: list[str]) -> list[dict]:
+def cc_param_combinations(penalties, solvers, max_iters, Cs, l1_ratios, orders):
     base_combos = br_and_lp_param_combinations(penalties, solvers, max_iters, Cs, l1_ratios)
     cc_combos = []
 
@@ -123,9 +114,7 @@ def multilabel_CV(wrapper_cls, X, y, scaler, n_splits=5, **wrapper_kwargs):
 
 def grid_search_wrapper(wrapper_cls, X, y, scaler, cv_splits, param_combinations, results_filename=None):
     best_score = -np.inf
-    best_model = None
     best_params = None
-    
     records = []
 
     for params in param_combinations:
@@ -133,22 +122,7 @@ def grid_search_wrapper(wrapper_cls, X, y, scaler, cv_splits, param_combinations
             warnings.simplefilter("always")
 
             metrics = multilabel_CV(wrapper_cls, X, y, scaler, cv_splits, **params)
-            
-            model = wrapper_cls(**params)
-            try:
-                model.fit(scaler.fit_transform(X), y)
-                fit_success = True
-            except Exception as e:
-                fit_success = False
-                fit_error = str(e)
-            else:
-                fit_error = None
-            
-            n_iter = getattr(getattr(model, 'estimator_', None), 'n_iter_', None)
-            if n_iter is not None:
-                if hasattr(n_iter, '__len__'):
-                    n_iter = max(n_iter)
-            
+
             warning_msgs = [str(warning.message) for warning in w]
 
         macro_f1 = metrics['macro_f1']
@@ -159,38 +133,46 @@ def grid_search_wrapper(wrapper_cls, X, y, scaler, cv_splits, param_combinations
         record = {
             **params,
             **metrics,
-            'fit_success': fit_success,
-            'fit_error': fit_error,
-            'n_iter': n_iter,
             'warnings': warning_msgs,
         }
         records.append(record)
 
-        if macro_f1 > best_score and fit_success:
+        if macro_f1 > best_score:
             best_score = macro_f1
             best_params = params
-            best_model = model
 
     if results_filename:
         df = pd.DataFrame(records)
         df.to_csv(results_filename, index=False)
 
-    return best_model, best_score, best_params
+    return best_score, best_params
 
 
-def grid_search_and_save(wrapper_cls, X_full, y_full, scaler, CV_SPLITS, param_grid, folder, model_name):
+def grid_search_and_save(wrapper_cls, X_full, y_full, CV_SPLITS, param_grid, folder, model_name):
     print(f"=== Grid Search {model_name} ===")
     results_file = os.path.join(folder, f"{model_name.lower().replace(' ', '_')}_grid_search_results.csv")
-    
-    best_model, best_score, best_params = grid_search_wrapper(
-        wrapper_cls, X_full, y_full, scaler, CV_SPLITS, param_grid, results_filename=results_file)
-    
+
+    temp_scaler = StandardScaler()  # used for CV only
+    best_score, best_params = grid_search_wrapper(
+        wrapper_cls, X_full, y_full, temp_scaler, CV_SPLITS, param_grid, results_filename=results_file
+    )
+
     print(f"Best {model_name} params: {best_params}, Best CV Macro F1: {best_score:.4f}")
 
+    # Now fit final model using best_params and final scaler on all training data
+    final_scaler = StandardScaler()
+    X_scaled = final_scaler.fit_transform(X_full)
+
+    final_model = wrapper_cls(**best_params)
+    final_model.fit(X_scaled, y_full)
+
+    # Save final model and fitted scaler
     model_path = os.path.join(folder, f"{model_name.lower().replace(' ', '_')}.joblib")
+    scaler_path = os.path.join(folder, f"{model_name.lower().replace(' ', '_')}_scaler.joblib")
     params_path = os.path.join(folder, f"{model_name.lower().replace(' ', '_')}_params.txt")
 
-    joblib.dump(best_model, model_path)
+    joblib.dump(final_model, model_path)
+    joblib.dump(final_scaler, scaler_path)
 
     with open(params_path, 'w') as f:
         for k, v in best_params.items():
@@ -202,17 +184,14 @@ if __name__ == "__main__":
     input_directory = input('Enter the path to the dataset directory: ').strip()
 
     X_full, X_test, y_full, y_test = load_dataset()
-    scaler = StandardScaler()
 
     CV_SPLITS = 5
-
     penalties = ['l1', 'l2']
     solvers = ['liblinear']
     max_iters = [100, 250, 500]
     Cs = [0.1, 1.0, 10]
     ratios = []
     orders = ['random']
-
     random_state = 123
 
     br_param_grid = br_and_lp_param_combinations(penalties, solvers, max_iters, Cs, ratios)
@@ -225,13 +204,11 @@ if __name__ == "__main__":
 
     folder = f'models/{input_directory}'
     os.makedirs(folder, exist_ok=True)
-    joblib.dump(scaler, f'{folder}/scaler.joblib')
 
     print("Starting grid search...")
 
+    grid_search_and_save(BinaryRelevanceWrapper, X_full, y_full, CV_SPLITS, br_param_grid, folder, "binary_relevance")
+    grid_search_and_save(LabelPowersetWrapper, X_full, y_full, CV_SPLITS, lp_param_grid, folder, "label_powerset")
+    grid_search_and_save(ClassifierChainsWrapper, X_full, y_full, CV_SPLITS, cc_param_grid, folder, "classifier_chains")
 
-    grid_search_and_save(BinaryRelevanceWrapper, X_full, y_full, scaler, CV_SPLITS, br_param_grid, folder, "binary_relevance")
-    grid_search_and_save(LabelPowersetWrapper, X_full, y_full, scaler, CV_SPLITS, lp_param_grid, folder, "label_powerset")
-    grid_search_and_save(ClassifierChainsWrapper, X_full, y_full, scaler, CV_SPLITS, cc_param_grid, folder, "classifier_chains")
-
-    print("Grid search complete. Best models saved.")
+    print("Grid search complete. Best models and scalers saved.")
