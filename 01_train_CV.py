@@ -7,13 +7,13 @@ from sklearn.metrics import f1_score, hamming_loss, accuracy_score, jaccard_scor
 import joblib
 import os
 import itertools
+import warnings
+import pandas as pd
 
 from src.binary_relevance import BinaryRelevanceWrapper
 from src.label_powerset import LabelPowersetWrapper
 from src.classifier_chains import ClassifierChainsWrapper
-
 from src.load_dataset import load_dataset
-from src.wrapper import MultiLabelWrapper
 from src.iterative_stratification import IterativeStratification
 
 
@@ -25,10 +25,16 @@ def print_metrics(metrics):
     print(f"Jaccard Score: {metrics['jaccard_score']:.4f}")
 
 
+def add_random_state_to_param_grid(param_grid, random_state):
+    for param_dict in param_grid:
+        param_dict['random_state'] = random_state
+    return param_grid
+
+
 def br_and_lp_param_combinations(penalties: list[str], solvers: list[str], max_iters: list[int], Cs: list[float], l1_ratios: list[float]) -> list[dict]:
     combinations = []
     for penalty, solver, max_iter, C in itertools.product(penalties, solvers, max_iters, Cs):
-        # filter invalid combos
+        # Filter out incompatible combinations
         if penalty == 'none' and solver not in ['lbfgs', 'newton-cg', 'saga']:
             continue
         if penalty == 'l1' and solver not in ['liblinear', 'saga']:
@@ -72,7 +78,8 @@ def cc_param_combinations(penalties: list[str], solvers: list[str], max_iters: l
 
 
 def multilabel_CV(wrapper_cls, X, y, scaler, n_splits=5, **wrapper_kwargs):
-    skf = IterativeStratification(n_splits=n_splits, order=1)
+    random_state = wrapper_kwargs.get('random_state', None)
+    skf = IterativeStratification(n_splits=n_splits, order=1, random_state=random_state)
 
     macro_f1_scores = []
     micro_f1_scores = []
@@ -107,58 +114,81 @@ def multilabel_CV(wrapper_cls, X, y, scaler, n_splits=5, **wrapper_kwargs):
     }
 
 
-def grid_search_wrapper(wrapper_cls, X, y, scaler, cv_splits, param_combinations):
+def grid_search_wrapper(wrapper_cls, X, y, scaler, cv_splits, param_combinations, results_filename=None):
     best_score = -np.inf
     best_model = None
     best_params = None
+    
+    records = []
 
     for params in param_combinations:
-        metrics = multilabel_CV(wrapper_cls, X, y, scaler, cv_splits, **params)
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+
+            metrics = multilabel_CV(wrapper_cls, X, y, scaler, cv_splits, **params)
+            
+            model = wrapper_cls(**params)
+            try:
+                model.fit(scaler.fit_transform(X), y)
+                fit_success = True
+            except Exception as e:
+                fit_success = False
+                fit_error = str(e)
+            else:
+                fit_error = None
+            
+            n_iter = getattr(getattr(model, 'estimator_', None), 'n_iter_', None)
+            if n_iter is not None:
+                if hasattr(n_iter, '__len__'):
+                    n_iter = max(n_iter)
+            
+            warning_msgs = [str(warning.message) for warning in w]
+
         macro_f1 = metrics['macro_f1']
         print(f"Params: {params}")
         print_metrics(metrics)
         print()
 
-        if macro_f1 > best_score:
+        record = {
+            **params,
+            **metrics,
+            'fit_success': fit_success,
+            'fit_error': fit_error,
+            'n_iter': n_iter,
+            'warnings': warning_msgs,
+        }
+        records.append(record)
+
+        if macro_f1 > best_score and fit_success:
             best_score = macro_f1
             best_params = params
-            best_model = wrapper_cls(**params)
-            best_model.fit(scaler.fit_transform(X), y)
+            best_model = model
+
+    if results_filename:
+        df = pd.DataFrame(records)
+        df.to_csv(results_filename, index=False)
 
     return best_model, best_score, best_params
 
 
-def binary_relevance_grid_search(X_full, y_full, scaler, CV_SPLITS, br_param_grid, folder):
-    print("=== Grid Search Binary Relevance ===")
-    br_model, br_score, br_params = grid_search_wrapper(BinaryRelevanceWrapper, X_full, y_full, scaler, CV_SPLITS, br_param_grid)
-    print(f"Best BR params: {br_params}, Best CV Macro F1: {br_score:.4f}")
-    joblib.dump(br_model, f'{folder}/binary_relevance.joblib')
-    with open(f'{folder}/binary_relevance_params.txt', 'w') as f:
-        for k, v in br_params.items():
+def grid_search_and_save(wrapper_cls, X_full, y_full, scaler, CV_SPLITS, param_grid, folder, model_name):
+    print(f"=== Grid Search {model_name} ===")
+    results_file = os.path.join(folder, f"{model_name.lower().replace(' ', '_')}_grid_search_results.csv")
+    
+    best_model, best_score, best_params = grid_search_wrapper(
+        wrapper_cls, X_full, y_full, scaler, CV_SPLITS, param_grid, results_filename=results_file)
+    
+    print(f"Best {model_name} params: {best_params}, Best CV Macro F1: {best_score:.4f}")
+
+    model_path = os.path.join(folder, f"{model_name.lower().replace(' ', '_')}.joblib")
+    params_path = os.path.join(folder, f"{model_name.lower().replace(' ', '_')}_params.txt")
+
+    joblib.dump(best_model, model_path)
+
+    with open(params_path, 'w') as f:
+        for k, v in best_params.items():
             f.write(f"{k}: {v}\n")
-        f.write(f"CV Macro F1: {br_score:.4f}\n")
-
-
-def label_powerset_grid_search(X_full, y_full, scaler, CV_SPLITS, lp_param_grid, folder):
-    print("=== Grid Search Label Powerset ===")
-    lp_model, lp_score, lp_params = grid_search_wrapper(LabelPowersetWrapper, X_full, y_full, scaler, CV_SPLITS, lp_param_grid)
-    print(f"Best LP params: {lp_params}, Best CV Macro F1: {lp_score:.4f}")
-    joblib.dump(lp_model, f'{folder}/label_powerset_best.joblib')
-    with open(f'{folder}/label_powerset_params.txt', 'w') as f:
-        for k, v in lp_params.items():
-            f.write(f"{k}: {v}\n")
-        f.write(f"CV Macro F1: {lp_score:.4f}\n")
-
-
-def classifier_chains_grid_search(X_full, y_full, scaler, CV_SPLITS, cc_param_grid, folder):
-    print("=== Grid Search Classifier Chains ===")
-    cc_model, cc_score, cc_params = grid_search_wrapper(ClassifierChainsWrapper, X_full, y_full, scaler, CV_SPLITS, cc_param_grid)
-    print(f"Best CC params: {cc_params}, Best CV Macro F1: {cc_score:.4f}")
-    joblib.dump(cc_model, f'{folder}/classifier_chains_best.joblib')
-    with open(f'{folder}/classifier_chains_params.txt', 'w') as f:
-        for k, v in cc_params.items():
-            f.write(f"{k}: {v}\n")
-        f.write(f"CV Macro F1: {cc_score:.4f}\n")
+        f.write(f"CV Macro F1: {best_score:.4f}\n")
 
 
 if __name__ == "__main__":
@@ -169,17 +199,22 @@ if __name__ == "__main__":
 
     CV_SPLITS = 5
 
-    penalties = ['l1', 'l2', 'elasticnet', 'none']
-    solvers = ['liblinear', 'lbfgs', 'saga', 'newton-cg']
-    max_iters = [250, 500, 750]
-    Cs = [0.01, 0.1, 1.0, 10]
+    penalties = ['l1', 'l2', 'elasticnet']
+    solvers = ['liblinear', 'saga'] 
+    max_iters = [100, 250, 500]
+    Cs = [0.1, 1.0, 10]
     ratios = [0.1, 0.5, 0.9]
+    orders = ['random']
 
-    orders = ['random']  # or add deterministic orders like [list(range(y_full.shape[1]))]
+    random_state = 123
 
     br_param_grid = br_and_lp_param_combinations(penalties, solvers, max_iters, Cs, ratios)
     lp_param_grid = br_and_lp_param_combinations(penalties, solvers, max_iters, Cs, ratios)
     cc_param_grid = cc_param_combinations(penalties, solvers, max_iters, Cs, ratios, orders)
+
+    br_param_grid = add_random_state_to_param_grid(br_param_grid, random_state)
+    lp_param_grid = add_random_state_to_param_grid(lp_param_grid, random_state)
+    cc_param_grid = add_random_state_to_param_grid(cc_param_grid, random_state)
 
     folder = f'models/{input_directory}'
     os.makedirs(folder, exist_ok=True)
@@ -187,8 +222,9 @@ if __name__ == "__main__":
 
     print("Starting grid search...")
 
-    binary_relevance_grid_search(X_full, y_full, scaler, CV_SPLITS, br_param_grid, folder)
-    label_powerset_grid_search(X_full, y_full, scaler, CV_SPLITS, lp_param_grid, folder)
-    #classifier_chains_grid_search(X_full, y_full, scaler, CV_SPLITS, cc_param_grid, folder)
+
+    grid_search_and_save(BinaryRelevanceWrapper, X_full, y_full, scaler, CV_SPLITS, br_param_grid, folder, "binary_relevance")
+    #grid_search_and_save(LabelPowersetWrapper, X_full, y_full, scaler, CV_SPLITS, lp_param_grid, folder, "label_powerset")
+    #grid_search_and_save(ClassifierChainsWrapper, X_full, y_full, scaler, CV_SPLITS, cc_param_grid, folder, "classifier_chains")
 
     print("Grid search complete. Best models saved.")
