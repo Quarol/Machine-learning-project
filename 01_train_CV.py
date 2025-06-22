@@ -167,7 +167,7 @@ def grid_search_and_save(wrapper_cls, X_full, y_full, CV_SPLITS, param_grid, fol
     final_model.fit(X_scaled, y_full)
 
     # Save final model and fitted scaler
-    model_path = os.path.join(folder, f"{model_name.lower().replace(' ', '_')}.joblib")
+    model_path =  os.path.join(folder, f"{model_name.lower().replace(' ', '_')}.joblib")
     scaler_path = os.path.join(folder, f"{model_name.lower().replace(' ', '_')}_scaler.joblib")
     params_path = os.path.join(folder, f"{model_name.lower().replace(' ', '_')}_params.txt")
 
